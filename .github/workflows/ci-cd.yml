@@ -1,74 +1,112 @@
-name: CI/CD Docker
+name: CI/CD avec SonarQube et Nexus
 
-# 1. Quand déclencher ?
 on:
   push:
-    branches: [ main ]       # À chaque push sur la branche main
+    branches: [ main ]
   pull_request:
-    branches: [ main ]       # À chaque PR ciblant main
+    branches: [ main ]
 
-# 2. Variables d'environnement globales
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/mon-image
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/mon-app-express
+  SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+  NEXUS_URL: ${{ secrets.NEXUS_URL }}
+  NEXUS_REPO: ${{ secrets.NEXUS_REPO }}
+  NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
+  NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
 
 jobs:
-  # ────────────────────────────
-  # Job 1 : Build & Test
-  # ────────────────────────────
+  # 1. Build et tests
   build-test:
-    name: 🛠 Build & Test
     runs-on: ubuntu-latest
     steps:
-      # 1. Checkout du code
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4  # v4 : dernière stable
 
-      # 2. Setup (Node/Python/etc. si nécessaire)
-      #    --> À adapter selon votre stack. Exemple Node.js :
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v4  # v4 : supporte cache et npm
         with:
           node-version: '18'
           cache: 'npm'
 
-      # 3. Install & Test
       - name: Install dependencies
-        run: npm ci
+        run: npm ci  # installe à partir de package-lock.json
 
-      - name: Run tests
-        run: npm test
+      - name: Run tests and coverage
+        run: npm test -- --coverage
 
-  # ────────────────────────────
-  # Job 2 : Docker Build & Push
-  # ────────────────────────────
-  docker-build-push:
-    name: 🐳 Docker Build & Push
-    needs: build-test           # ne s’exécute qu’après succès du build-test
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v3  # v3 : upload d’artéfacts
+        with:
+          name: coverage-report
+          path: coverage
+
+  # 2. Analyse SonarQube
+  sonar-analysis:
+    needs: build-test
     runs-on: ubuntu-latest
     steps:
-      # 1. Checkout (encore)  
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Connexion à Docker Hub
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v2
+      - name: Setup Node.js for analysis
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: SonarQube Scan
+        uses: sonarsource/sonarcloud-github-action@v1.7.0  # version fixe recommandée
+        with:
+          projectBaseDir: .
+        env:
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+
+  # 3. Build Docker & Push
+  docker-build-push:
+    needs: sonar-analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2  # v2 : stable
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 3. Build de l’image Docker
       - name: Build Docker image
         run: |
           docker build \
+            --file Dockerfile \
             --tag ${{ env.IMAGE_NAME }}:latest \
             --tag ${{ env.IMAGE_NAME }}:${{ github.sha }} \
             .
 
-      # 4. Push de l’image
       - name: Push Docker image
         run: |
           docker push ${{ env.IMAGE_NAME }}:latest
           docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  # 4. Publish npm package to Nexus
+  nexus-publish:
+    needs: docker-build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure npm for Nexus
+        run: |
+          npm config set registry ${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/
+          npm config set //${{ env.NEXUS_URL#https:// }}/repository/${{ env.NEXUS_REPO }}/:_username ${{ env.NEXUS_USERNAME }}
+          npm config set //${{ env.NEXUS_URL#https:// }}/repository/${{ env.NEXUS_REPO }}/:_password ${{ env.NEXUS_PASSWORD }}
+
+      - name: Publish to Nexus
+        run: npm publish --registry ${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/
