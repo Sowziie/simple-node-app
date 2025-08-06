@@ -93,20 +93,3 @@ jobs:
         run: |
           docker push ${{ env.IMAGE_NAME }}:latest
           docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
-
-  # 4. Publish npm package to Nexus
-  nexus-publish:
-    needs: docker-build-push
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Configure npm for Nexus
-        run: |
-          npm config set registry ${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/
-          npm config set //${{ env.NEXUS_URL#https:// }}/repository/${{ env.NEXUS_REPO }}/:_username ${{ env.NEXUS_USERNAME }}
-          npm config set //${{ env.NEXUS_URL#https:// }}/repository/${{ env.NEXUS_REPO }}/:_password ${{ env.NEXUS_PASSWORD }}
-
-      - name: Publish to Nexus
-        run: npm publish --registry ${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/
