@@ -10,7 +10,7 @@ env:
   REGISTRY: docker.io
   IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/mon-image
   NEXUS_REGISTRY: http://18.234.236.42:8081/repository/npm-hosted/
-  NEXUS_GROUP_REGISTRY: http://18.234.236.42:8081/repository/npm-group/
+  NEXUS_IP: 18.234.236.42
 
 jobs:
   build-test:
@@ -32,13 +32,16 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Fix package.json
+        run: npm pkg fix
+
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v2
         with:
           projectBaseDir: .
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: http://18.234.236.42:9000
+          SONAR_HOST_URL: http://${{ env.NEXUS_IP }}:9000
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -62,18 +65,21 @@ jobs:
           node-version: '18'
           cache: 'npm'
 
+      - name: Fix package.json
+        run: npm pkg fix
+
       - name: Configure Nexus credentials
         run: |
-          echo "//18.234.236.42:8081/repository/npm-hosted/:_auth=$(echo -n '${{ secrets.NEXUS_USER }}:${{ secrets.NEXUS_PASSWORD }}' | base64)" > .npmrc
-          echo "registry=${{ env.NEXUS_GROUP_REGISTRY }}" >> .npmrc
+          # Créer le fichier .npmrc avec l'authentification
+          echo "//${{ env.NEXUS_IP }}:8081/repository/npm-hosted/:_auth=${{ secrets.NEXUS_AUTH_TOKEN }}" > .npmrc
+          echo "registry=http://${{ env.NEXUS_IP }}:8081/repository/npm-hosted/" >> .npmrc
           echo "always-auth=true" >> .npmrc
+          cat .npmrc  # Pour vérification (les secrets sont masqués)
 
       - name: Bump version and publish
         run: |
           npm version patch --no-git-tag-version
-          npm publish --registry ${{ env.NEXUS_REGISTRY }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NEXUS_TOKEN }}
+          npm publish
 
   docker-build-push:
     name: 🐳 Docker Build & Push
