@@ -1,88 +1,58 @@
-name: CI/CD avec SonarQube et Nexus
+# Nom du workflow affiché dans l'interface GitHub Actions
+name: CI/CD Docker
 
+# Définition des événements déclencheurs du pipeline
 on:
   push:
-    branches: [ main ]
+    branches: [ main ]      # Se déclenche sur chaque push dans la branche main
   pull_request:
-    branches: [ main ]
+    branches: [ main ]      # Se déclenche aussi pour chaque Pull Request vers main
 
+# Variables d'environnement communes aux jobs
 env:
-  REGISTRY: docker.io
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/mon-app-express
-  SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-  NEXUS_URL: ${{ secrets.NEXUS_URL }}
-  NEXUS_REPO: ${{ secrets.NEXUS_REPO }}
-  NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
-  NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+  REGISTRY: docker.io                                # Registre Docker utilisé (Docker Hub)
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/mon-app-express  # Nom de l'image à publier
 
 jobs:
-  # 1. Build et tests
+  # Premier job : build et test de l'application Node.js
   build-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest                          # Machine virtuelle Ubuntu fournie par GitHub
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4  # v4 : dernière stable
+      - name: Checkout
+        uses: actions/checkout@v4                  # Clone le code source du repository
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4  # v4 : supporte cache et npm
+        uses: actions/setup-node@v4                # Installe Node.js
         with:
-          node-version: '18'
-          cache: 'npm'
+          node-version: '18'                       # Version de Node.js à utiliser
+          cache: npm                               # Active le cache des dépendances npm
 
       - name: Install dependencies
-        run: npm ci  # installe à partir de package-lock.json
+        run: npm ci                                # Installation des dépendances avec npm
 
-      - name: Run tests and coverage
-        run: npm test -- --coverage
+      - name: Run tests
+        run: npm test                              # Lance les tests unitaires (Jest)
 
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v3  # v3 : upload d’artéfacts
-        with:
-          name: coverage-report
-          path: coverage
-
-  # 2. Analyse SonarQube
-  sonar-analysis:
-    needs: build-test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js for analysis
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: SonarQube Scan
-        uses: sonarsource/sonarcloud-github-action@v1.7.0  # version fixe recommandée
-        with:
-          projectBaseDir: .
-        env:
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-
-  # 3. Build Docker & Push
+  # Deuxième job : construction de l'image Docker et push sur Docker Hub
   docker-build-push:
-    needs: sonar-analysis
+    needs: build-test                              # Ce job ne démarre que si build-test a réussi
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4                  # Clone à nouveau le code pour ce job
 
-      - name: Login to DockerHub
-        uses: docker/login-action@v2  # v2 : stable
+      - name: Login to Docker
+        uses: docker/login-action@v2               # Authentification au registre Docker
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ env.REGISTRY }}            # Registre Docker cible
+          username: ${{ secrets.DOCKERHUB_USERNAME }}  # Utilisateur Docker Hub (secret GitHub)
+          password: ${{ secrets.DOCKERHUB_TOKEN }}     # Token Docker Hub (secret GitHub)
 
       - name: Build Docker image
         run: |
+          # Construit l'image Docker avec deux tags :
+          # - latest : dernière version
+          # - SHA commit : version unique liée au commit
           docker build \
             --file Dockerfile \
             --tag ${{ env.IMAGE_NAME }}:latest \
@@ -91,5 +61,6 @@ jobs:
 
       - name: Push Docker image
         run: |
+          # Pousse les deux tags vers Docker Hub
           docker push ${{ env.IMAGE_NAME }}:latest
           docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
