@@ -1,4 +1,4 @@
-name: CI/CD Docker
+name: CI/CD Docker + SonarQube
 
 on:
   push:
@@ -9,12 +9,10 @@ on:
 env:
   REGISTRY: docker.io
   IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/mon-image
-  SONAR_HOST_URL: http://18.234.236.42:9000
-  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
 jobs:
   build-test:
-    name: 🛠 Build & Test
+    name: 🛠 Build, Test & SonarQube
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -30,41 +28,29 @@ jobs:
         run: npm ci
 
       - name: Run tests
-        run: npm test -- --coverage
+        run: npm test
 
-      - name: Upload coverage
-        uses: actions/upload-artifact@v3
-        with:
-          name: coverage-report
-          path: coverage
-
-  sonar-analysis:
-    name: 🔎 SonarQube Analysis
-    needs: build-test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run SonarQube Scan
-        uses: sonarsource/sonarqube-scan-action@v1.2.0
+      # ⬇️ Analyse SonarQube
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v2
         with:
           projectBaseDir: .
         env:
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: http://18.234.236.42:9000
+
+      # 📦 (optionnel) Upload des artefacts
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            coverage/
+            reports/
 
   docker-build-push:
     name: 🐳 Docker Build & Push
-    needs: sonar-analysis
+    needs: build-test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
