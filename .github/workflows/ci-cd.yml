@@ -35,8 +35,13 @@ jobs:
       - name: Fix package.json
         run: |
           npm pkg fix
-          npm pkg delete private  # Supprime le champ 'private'
-          npm pkg set private=false  # Défini explicitement à false
+          # Suppression explicite du champ 'private'
+          npm pkg delete private
+          # Vérification manuelle
+          if grep -q '"private":' package.json; then
+            echo "ERREUR: Le champ 'private' est toujours présent!"
+            exit 1
+          fi
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v2
@@ -70,19 +75,22 @@ jobs:
 
       - name: Configure Nexus credentials
         run: |
-          # Créer le fichier .npmrc avec l'authentification
           echo "//${{ env.NEXUS_IP }}:8081/repository/npm-hosted/:_auth=${{ secrets.NEXUS_AUTH_TOKEN }}" > .npmrc
           echo "registry=http://${{ env.NEXUS_IP }}:8081/repository/npm-hosted/" >> .npmrc
           echo "always-auth=true" >> .npmrc
 
-      - name: Prepare package for publication
+      - name: Force remove private field
         run: |
-          # Supprimer le champ 'private' s'il existe
-          npm pkg delete private
-          # S'assurer que private est bien false
-          npm pkg set private=false
-          # Vérifier le contenu final
+          # Solution robuste avec sed
+          sed -i '/"private":/d' package.json
+          
+          # Vérification finale
+          echo "Contenu final du package.json:"
           cat package.json
+          if grep -q '"private":' package.json; then
+            echo "ERREUR CRITIQUE: Le champ 'private' est toujours présent!"
+            exit 1
+          fi
 
       - name: Bump version and publish
         run: |
