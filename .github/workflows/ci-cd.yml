@@ -33,7 +33,10 @@ jobs:
         run: npm test
 
       - name: Fix package.json
-        run: npm pkg fix
+        run: |
+          npm pkg fix
+          npm pkg delete private  # Supprime le champ 'private'
+          npm pkg set private=false  # Défini explicitement à false
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v2
@@ -65,16 +68,21 @@ jobs:
           node-version: '18'
           cache: 'npm'
 
-      - name: Fix package.json
-        run: npm pkg fix
-
       - name: Configure Nexus credentials
         run: |
           # Créer le fichier .npmrc avec l'authentification
           echo "//${{ env.NEXUS_IP }}:8081/repository/npm-hosted/:_auth=${{ secrets.NEXUS_AUTH_TOKEN }}" > .npmrc
           echo "registry=http://${{ env.NEXUS_IP }}:8081/repository/npm-hosted/" >> .npmrc
           echo "always-auth=true" >> .npmrc
-          cat .npmrc  # Pour vérification (les secrets sont masqués)
+
+      - name: Prepare package for publication
+        run: |
+          # Supprimer le champ 'private' s'il existe
+          npm pkg delete private
+          # S'assurer que private est bien false
+          npm pkg set private=false
+          # Vérifier le contenu final
+          cat package.json
 
       - name: Bump version and publish
         run: |
