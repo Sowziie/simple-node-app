@@ -1,66 +1,90 @@
-# Nom du workflow affiché dans l'interface GitHub Actions
 name: CI/CD Docker
 
-# Définition des événements déclencheurs du pipeline
 on:
   push:
-    branches: [ main ]      # Se déclenche sur chaque push dans la branche main
+    branches: [ main ]
   pull_request:
-    branches: [ main ]      # Se déclenche aussi pour chaque Pull Request vers main
+    branches: [ main ]
 
-# Variables d'environnement communes aux jobs
 env:
-  REGISTRY: docker.io                                # Registre Docker utilisé (Docker Hub)
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/mon-app-express  # Nom de l'image à publier
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/mon-image
+  SONAR_HOST_URL: http://18.234.236.42:9000
+  SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
 jobs:
-  # Premier job : build et test de l'application Node.js
   build-test:
-    runs-on: ubuntu-latest                          # Machine virtuelle Ubuntu fournie par GitHub
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4                  # Clone le code source du repository
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4                # Installe Node.js
-        with:
-          node-version: '18'                       # Version de Node.js à utiliser
-          cache: npm                               # Active le cache des dépendances npm
-
-      - name: Install dependencies
-        run: npm ci                                # Installation des dépendances avec npm
-
-      - name: Run tests
-        run: npm test                              # Lance les tests unitaires (Jest)
-
-  # Deuxième job : construction de l'image Docker et push sur Docker Hub
-  docker-build-push:
-    needs: build-test                              # Ce job ne démarre que si build-test a réussi
+    name: 🛠 Build & Test
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4                  # Clone à nouveau le code pour ce job
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Login to Docker
-        uses: docker/login-action@v2               # Authentification au registre Docker
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          registry: ${{ env.REGISTRY }}            # Registre Docker cible
-          username: ${{ secrets.DOCKERHUB_USERNAME }}  # Utilisateur Docker Hub (secret GitHub)
-          password: ${{ secrets.DOCKERHUB_TOKEN }}     # Token Docker Hub (secret GitHub)
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test -- --coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report
+          path: coverage
+
+  sonar-analysis:
+    name: 🔎 SonarQube Analysis
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@v1.2.0
+        with:
+          projectBaseDir: .
+        env:
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+
+  docker-build-push:
+    name: 🐳 Docker Build & Push
+    needs: sonar-analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build Docker image
         run: |
-          # Construit l'image Docker avec deux tags :
-          # - latest : dernière version
-          # - SHA commit : version unique liée au commit
           docker build \
-            --file Dockerfile \
             --tag ${{ env.IMAGE_NAME }}:latest \
             --tag ${{ env.IMAGE_NAME }}:${{ github.sha }} \
             .
 
       - name: Push Docker image
         run: |
-          # Pousse les deux tags vers Docker Hub
           docker push ${{ env.IMAGE_NAME }}:latest
           docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
